@@ -44,9 +44,20 @@
     header {
       display: block;
       overflow: auto;
-      background: #444;
+      background: #0099ff;
       margin-bottom: 1em;
       height: 3em;
+    }
+    
+    #data-loader {
+      display: none;
+      font-size: 2em;
+      text-align: center;
+      height: 100%;
+    }
+    
+    #data-loader input {
+      display: none;
     }
 
     #calendar-container {
@@ -99,6 +110,9 @@
 
   <div id="calendar-container">
     <div id="calendar"></div>
+    <div id="data-loader">
+      Drag your data file here to load the timeline
+    </div>
   </div>
 
   <div id="modal-contents" class="modal">
@@ -108,123 +122,174 @@
   <a id="modal-link" href="#modal-contents" rel="modal:open"></a>
 
   <script>
+    function DnDFileController(selector, onDropCallback) {
+      var el = $(selector);
+      var ogText = el.text();
+      el.on('dragenter', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        el.text('Drop here...');
+      });
+      el.on('dragover', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+      });
+      el.on('dragleave', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        el.text(ogText);
+      });
+      el.on('drop', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        el.text('Loading...');
+        onDropCallback(e.originalEvent.dataTransfer.files, e);
+      });
+    };
+    
     function eventColor(action) {
       if (action.errorCode == 'AccessDenied') return "red";
       if (action.chrackerTag == 'manual') return "green";
       return null;
     };
+    
+    function processData(sourceData, callback) {
+      var results = {
+        'users': {}
+      };
+      if (sourceData.id) results.id = sourceData.id;
+      if (sourceData.comment) results.comment = sourceData.comment;
+      
+      var usersData = sourceData['users'];
+      for (var name in usersData) {
+        var data = usersData[name];
+        var resources = [];
+        var sourceNames = [];
+        var eventSourcesAndAccounts = {};
+        data.forEach(function(item, i) {
+          var accountGroupId = item.recipientAccountId;
+          var eventSourceGroupId = item.recipientAccountId + item.eventSource;
+          var eventNameGroupId = item.recipientAccountId + item.eventSource + item.eventName;
+
+          if (!resources.find(function(x) {
+              return x.id === eventSourceGroupId
+            })) resources.push({
+            id: eventSourceGroupId,
+            title: item.eventSource,
+            eventSource: item.eventSource,
+            accountGroupId
+          });
+
+          var eventSourceGroup = resources.find(function(x) {
+            return x.id === eventSourceGroupId
+          });
+          if (!Array.isArray(eventSourceGroup.children)) eventSourceGroup.children = [];
+          if (!eventSourceGroup.children.find(function(x) {
+              return x.id === eventNameGroupId
+            })) eventSourceGroup.children.push({
+            id: eventNameGroupId,
+            title: item.eventName,
+            eventSource: item.eventName,
+            accountGroupId
+          });
+
+          var eventSourceAndAccount = item.eventSource + ':' + item.recipientAccountId;
+          if (!Array.isArray(eventSourcesAndAccounts[eventSourceAndAccount])) eventSourcesAndAccounts[eventSourceAndAccount] = [];
+          eventSourcesAndAccounts[eventSourceAndAccount].push(item);
+        });
+
+        var events = [];
+        var defaultDate = moment();
+        for (var sourceAndAccount in eventSourcesAndAccounts) {
+          var actions = eventSourcesAndAccounts[sourceAndAccount];
+          var sourceName = sourceAndAccount.split(':')[0];
+          var accountId = sourceAndAccount.split(':')[1];
+          var eventSourceGroupId = accountId + sourceName;
+
+          actions.sort(function(a, b) {
+            if (moment(a.eventTime) > moment(b.eventTime)) return 1;
+            if (moment(a.eventTime) < moment(b.eventTime)) return -1;
+            return 0;
+          });
+
+          var minimumEventMins = 10;
+          var start = moment(actions[0].eventTime);
+          var end = moment(actions[actions.length - 1].eventTime);
+          if (end < moment(start).add(minimumEventMins, 'minutes')) end = moment(end).add(minimumEventMins, 'minutes');
+          defaultDate = start;
+
+          events.push({
+            id: sourceAndAccount,
+            title: sourceName,
+            resourceId: eventSourceGroupId,
+            start,
+            end,
+            className: 'service-event'
+          });
+
+          actions.forEach(function(action, iter) {
+            var start = moment(action.eventTime);
+            var end = moment(start).add(minimumEventMins, 'minutes');
+            var eventName = action.eventName;
+            var id = sourceAndAccount + eventName + iter;
+            var eventNameGroupId = action.recipientAccountId + action.eventSource + action.eventName;
+            events.push({
+              id,
+              title: eventName + ' (' + sourceName + ')',
+              resourceId: eventNameGroupId,
+              start,
+              end,
+              action,
+              className: 'action-event',
+              color: eventColor(action),
+              modal: false
+            });
+          });
+        };
+        results['users'][name] = {
+          defaultDate,
+          events,
+          resources
+        };
+      };
+
+      callback(results);
+    }
+    
+    function fileLoader(callback) { 
+      return function(files) {
+        var file = files[0];
+        if (!file.type.match('application/json')) {
+          alert('File is not in JSON format');
+        }
+        var reader = new FileReader();
+        reader.onloadend = function(e) {
+          var sourceData = JSON.parse(this.result);
+          processData(sourceData, callback);
+        };
+        reader.readAsText(file);
+      };
+    };
 
     function getMyData(callback) {
       $.getJSON('./data.json')
       .done(function(sourceData) {
-        var results = {};
-
-        for (var name in sourceData) {
-          var data = sourceData[name];
-          var resources = [];
-          var sourceNames = [];
-          var eventSourcesAndAccounts = {};
-          data.forEach(function(item, i) {
-            var accountGroupId = item.recipientAccountId;
-            var eventSourceGroupId = item.recipientAccountId + item.eventSource;
-            var eventNameGroupId = item.recipientAccountId + item.eventSource + item.eventName;
-
-            if (!resources.find(function(x) {
-                return x.id === eventSourceGroupId
-              })) resources.push({
-              id: eventSourceGroupId,
-              title: item.eventSource,
-              eventSource: item.eventSource,
-              accountGroupId
-            });
-
-            var eventSourceGroup = resources.find(function(x) {
-              return x.id === eventSourceGroupId
-            });
-            if (!Array.isArray(eventSourceGroup.children)) eventSourceGroup.children = [];
-            if (!eventSourceGroup.children.find(function(x) {
-                return x.id === eventNameGroupId
-              })) eventSourceGroup.children.push({
-              id: eventNameGroupId,
-              title: item.eventName,
-              eventSource: item.eventName,
-              accountGroupId
-            });
-
-            var eventSourceAndAccount = item.eventSource + ':' + item.recipientAccountId;
-            if (!Array.isArray(eventSourcesAndAccounts[eventSourceAndAccount])) eventSourcesAndAccounts[eventSourceAndAccount] = [];
-            eventSourcesAndAccounts[eventSourceAndAccount].push(item);
-          });
-
-          var events = [];
-          var defaultDate = moment();
-          for (var sourceAndAccount in eventSourcesAndAccounts) {
-            var actions = eventSourcesAndAccounts[sourceAndAccount];
-            var sourceName = sourceAndAccount.split(':')[0];
-            var accountId = sourceAndAccount.split(':')[1];
-            var eventSourceGroupId = accountId + sourceName;
-
-            actions.sort(function(a, b) {
-              if (moment(a.eventTime) > moment(b.eventTime)) return 1;
-              if (moment(a.eventTime) < moment(b.eventTime)) return -1;
-              return 0;
-            });
-
-            var minimumEventMins = 10;
-            var start = moment(actions[0].eventTime);
-            var end = moment(actions[actions.length - 1].eventTime);
-            if (end < moment(start).add(minimumEventMins, 'minutes')) end = moment(end).add(minimumEventMins, 'minutes');
-            defaultDate = start;
-
-            events.push({
-              id: sourceAndAccount,
-              title: sourceName,
-              resourceId: eventSourceGroupId,
-              start,
-              end,
-              className: 'service-event'
-            });
-
-            actions.forEach(function(action, iter) {
-              var start = moment(action.eventTime);
-              var end = moment(start).add(minimumEventMins, 'minutes');
-              var eventName = action.eventName;
-              var id = sourceAndAccount + eventName + iter;
-              var eventNameGroupId = action.recipientAccountId + action.eventSource + action.eventName;
-              events.push({
-                id,
-                title: eventName + ' (' + sourceName + ')',
-                resourceId: eventNameGroupId,
-                start,
-                end,
-                action,
-                className: 'action-event',
-                color: eventColor(action),
-                modal: false
-              });
-            });
-          };
-          results[name] = {
-            defaultDate,
-            events,
-            resources
-          };
-        };
-
-        callback(results);
+        processData(sourceData, callback)
+      })
+      .fail(function() {
+        $('#data-loader').show();
+        new DnDFileController('#data-loader', fileLoader(callback));
       });
     };
-
-    var body = document.getElementById('body');
-    var header = document.getElementById('header');
-    getMyData(function(data) {
-      var users = Object.keys(data);
+    
+    function loadCalendar(data) {
+      var users = Object.keys(data['users']);
       var user = users[0];
       var {
         events,
         resources,
         defaultDate
-      } = data[user];
+      } = data['users'][user];
 
       function collapseView() {
         $('#calendar .fc-icon-down-triangle').each(function(index, expander) {
@@ -297,7 +362,11 @@
         },
         schedulerLicenseKey: 'GPL-My-Project-Is-Open-Source',
       });
-    });
+    };
+
+    var body = document.getElementById('body');
+    var header = document.getElementById('header');
+    getMyData(loadCalendar);
   </script>
 </body>
 
