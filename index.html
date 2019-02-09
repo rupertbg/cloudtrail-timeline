@@ -1,0 +1,304 @@
+<!DOCTYPE HTML>
+<html>
+
+<head>
+  <title>CloudTrail Timeline</title>
+
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/3.10.0/fullcalendar.min.css" rel="stylesheet" type="text/css" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar-scheduler/1.9.4/scheduler.min.css" rel="stylesheet" type="text/css" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/jquery-modal/0.9.1/jquery.modal.min.css" rel="stylesheet" type="text/css" />
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-modal/0.9.1/jquery.modal.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.24.0/moment.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar/3.10.0/fullcalendar.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fullcalendar-scheduler/1.9.4/scheduler.min.js"></script>
+
+  <style>
+    body,
+    html {
+      font-family: arial, sans-serif;
+      font-size: 11pt;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    body {
+      position: relative;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      left: 0;
+    }
+
+    header h1 {
+      text-align: left;
+      display: block;
+      margin: 1em;
+      font-size: 1em;
+      color: white;
+    }
+
+    header {
+      display: block;
+      overflow: auto;
+      background: #444;
+      margin-bottom: 1em;
+      height: 3em;
+    }
+
+    #calendar-container {
+      display: block;
+      margin: 0;
+      padding: 0;
+      position: absolute;
+      top: 4em;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+
+    .fc-header-toolbar {
+      padding: 0 1em;
+    }
+
+    .fc-event.service-event {
+      background: #aaf;
+      color: #444;
+    }
+
+    .fc-event.service-event:hover {
+      background: #444;
+      color: #fff;
+      cursor: pointer;
+    }
+
+    .fc-event.action-event:hover {
+      cursor: pointer;
+    }
+
+    #modal-list {
+      white-space: pre;
+      font-family: monospace;
+      overflow: auto;
+    }
+
+    .modal {
+      max-width: 50%;
+    }
+  </style>
+
+</head>
+
+<body id="body">
+  <header id="header">
+    <h1>CloudTrail Timeline</h1>
+  </header>
+
+  <div id="calendar-container">
+    <div id="calendar"></div>
+  </div>
+
+  <div id="modal-contents" class="modal">
+    <div id="modal-list"></div>
+    <a href="#" rel="modal:close">Close</a>
+  </div>
+  <a id="modal-link" href="#modal-contents" rel="modal:open"></a>
+
+  <script>
+    function eventColor(action) {
+      if (action.errorCode == 'AccessDenied') return "red";
+      if (action.chrackerTag == 'manual') return "green";
+      return null;
+    };
+
+    function getMyData(callback) {
+      $.getJSON('./data.json')
+      .done(function(sourceData) {
+        var results = {};
+
+        for (var name in sourceData) {
+          var data = sourceData[name];
+          var resources = [];
+          var sourceNames = [];
+          var eventSourcesAndAccounts = {};
+          data.forEach(function(item, i) {
+            var accountGroupId = item.recipientAccountId;
+            var eventSourceGroupId = item.recipientAccountId + item.eventSource;
+            var eventNameGroupId = item.recipientAccountId + item.eventSource + item.eventName;
+
+            if (!resources.find(function(x) {
+                return x.id === eventSourceGroupId
+              })) resources.push({
+              id: eventSourceGroupId,
+              title: item.eventSource,
+              eventSource: item.eventSource,
+              accountGroupId
+            });
+
+            var eventSourceGroup = resources.find(function(x) {
+              return x.id === eventSourceGroupId
+            });
+            if (!Array.isArray(eventSourceGroup.children)) eventSourceGroup.children = [];
+            if (!eventSourceGroup.children.find(function(x) {
+                return x.id === eventNameGroupId
+              })) eventSourceGroup.children.push({
+              id: eventNameGroupId,
+              title: item.eventName,
+              eventSource: item.eventName,
+              accountGroupId
+            });
+
+            var eventSourceAndAccount = item.eventSource + ':' + item.recipientAccountId;
+            if (!Array.isArray(eventSourcesAndAccounts[eventSourceAndAccount])) eventSourcesAndAccounts[eventSourceAndAccount] = [];
+            eventSourcesAndAccounts[eventSourceAndAccount].push(item);
+          });
+
+          var events = [];
+          var defaultDate = moment();
+          for (var sourceAndAccount in eventSourcesAndAccounts) {
+            var actions = eventSourcesAndAccounts[sourceAndAccount];
+            var sourceName = sourceAndAccount.split(':')[0];
+            var accountId = sourceAndAccount.split(':')[1];
+            var eventSourceGroupId = accountId + sourceName;
+
+            actions.sort(function(a, b) {
+              if (moment(a.eventTime) > moment(b.eventTime)) return 1;
+              if (moment(a.eventTime) < moment(b.eventTime)) return -1;
+              return 0;
+            });
+
+            var minimumEventMins = 10;
+            var start = moment(actions[0].eventTime);
+            var end = moment(actions[actions.length - 1].eventTime);
+            if (end < moment(start).add(minimumEventMins, 'minutes')) end = moment(end).add(minimumEventMins, 'minutes');
+            defaultDate = start;
+
+            events.push({
+              id: sourceAndAccount,
+              title: sourceName,
+              resourceId: eventSourceGroupId,
+              start,
+              end,
+              className: 'service-event'
+            });
+
+            actions.forEach(function(action, iter) {
+              var start = moment(action.eventTime);
+              var end = moment(start).add(minimumEventMins, 'minutes');
+              var eventName = action.eventName;
+              var id = sourceAndAccount + eventName + iter;
+              var eventNameGroupId = action.recipientAccountId + action.eventSource + action.eventName;
+              events.push({
+                id,
+                title: eventName + ' (' + sourceName + ')',
+                resourceId: eventNameGroupId,
+                start,
+                end,
+                action,
+                className: 'action-event',
+                color: eventColor(action),
+                modal: false
+              });
+            });
+          };
+          results[name] = {
+            defaultDate,
+            events,
+            resources
+          };
+        };
+
+        callback(results);
+      });
+    };
+
+    var body = document.getElementById('body');
+    var header = document.getElementById('header');
+    getMyData(function(data) {
+      var users = Object.keys(data);
+      var user = users[0];
+      var {
+        events,
+        resources,
+        defaultDate
+      } = data[user];
+
+      function collapseView() {
+        $('#calendar .fc-icon-down-triangle').each(function(index, expander) {
+          $(expander).click();
+        });
+      };
+
+      $('#calendar').fullCalendar({
+        defaultView: 'timelineDay',
+        customButtons: {
+          resetDate: {
+            text: 'Reset Date',
+            click: function() {
+              $('#calendar').fullCalendar('gotoDate', defaultDate);
+              collapseView();
+            }
+          },
+          customLeft: {
+            icon: 'left-single-arrow',
+            click: function() {
+              $('#calendar').fullCalendar('prev');
+              collapseView();
+            }
+          },
+          customRight: {
+            icon: 'right-single-arrow',
+            click: function() {
+              $('#calendar').fullCalendar('next');
+              collapseView();
+            }
+          }
+        },
+        header: {
+          left: 'customLeft,customRight resetDate',
+          right: 'title'
+        },
+        titleFormat: '[' + user + '] - D MMM YYYY',
+        height: 'parent',
+        defaultDate,
+        events,
+        resources,
+        resourceColumns: [{
+            group: true,
+            labelText: 'Account',
+            field: 'accountGroupId'
+          },
+          {
+            labelText: 'Service',
+            field: 'eventSource'
+          }
+        ],
+        scrollTime: moment(defaultDate).format('HH:mm:ss'),
+        viewRender: collapseView,
+        eventRender: function(event, el) {
+          el.attr('title', event.title);
+        },
+        eventClick: function(calEvent, jsEvent, view) {
+          $('#calendar tr[data-resource-id="' + calEvent.resourceId + '"] .fc-cell-text').each(function(index, cell) {
+            $(cell).siblings('.fc-expander').click();
+          });
+          if (calEvent.action) {
+            $('#modal-link').click();
+            if (!calEvent.modal) {
+              $('#modal-list').empty();
+              $('#modal-list').append('<pre>');
+              $('#modal-list').append(JSON.stringify(calEvent.action, null, 2))
+              $('#modal-list').append('</pre>');
+            } else calEvent.modal = !calEvent.modal;
+          };
+        },
+        schedulerLicenseKey: 'GPL-My-Project-Is-Open-Source',
+      });
+    });
+  </script>
+</body>
+
+</html>
