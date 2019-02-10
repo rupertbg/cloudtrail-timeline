@@ -2,7 +2,7 @@
 This is a basic [FullCalendar Scheduler](https://fullcalendar.io/scheduler) implementation for viewing AWS CloudTrail Logs.
 
 ## Usage
-You can load your data by dragging a `data.json` file (formatted as below) onto the interface. Alternatively, if a `data.json` file is served a the same remote directory as the `index.html`, it will be automatically loaded in.
+You can load your data by dragging a `data.json` file (formatted as below) onto the interface. Alternatively, if a `data.json` file is served at the same remote directory as the `index.html`, it will be automatically loaded in via an ajax call.
 
 ### Schema
 The schema for the `data.json` file is designed so that it can contain multiple users at once. The frontend currently only shows the first user, however additional ability to show multiple or switch between will be added shortly.
